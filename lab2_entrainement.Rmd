@@ -100,6 +100,7 @@ kmsurvival.bf = survfit(Surv(chldage,hospital) ~ Z, data= pneumon)
 library(ggfortify)
 autoplot(kmsurvival.bf,main="Fig 2-Courbes de Kaplan-Meier - allaitement / ou pas (à partir de la naissance)")
 ```
+
 L'ecartement des courbes tend à s'accentuer avec le temps toutes deux décroissante, sans jamais se recouper.
 La courbe de survie de la population qui n'allète pas à une décroissance assez rapidejusqu'au 3ème mois. 
 La décroissance ralentit ensuite mais reste toujours plus importante que pour l'autre population.
