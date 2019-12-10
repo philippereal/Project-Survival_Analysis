@@ -1,10 +1,8 @@
 ---
-title: 'Survival Analysis - TP Lab 2'
+title: "Survival Analysis - TP Lab 2"
 output:
   html_document:
     df_print: paged
-  html_notebook: default
-  pdf_document: default
 ---
 
 ```
@@ -26,32 +24,27 @@ Vérification que les variables sont bien importées. Point d'attention particul
 ```{r}
 data("pneumon")
 head(pneumon)
-#?pneumon
 ```
 
 ```{r}
 glimpse(pneumon)
 ```
 
-
-Traitements des factor.region et race sont des variables categorielles.
+Traitements (fonction factor) des variables region et race sont des variables categorielles.
 ```{r}
-pneumon = mutate(pneumon , region = as.factor((region)))
-pneumon = mutate(pneumon , race = as.factor((race)))
+pneumon <- mutate(pneumon,race=as.factor(race))
+pneumon <- mutate(pneumon,region=as.factor(region))
 ```
 
 ### Question 2
-
-On cherche à représenter la courbe de l'estimateur de Kaplan-Meyer pour la fonction de survie : âge de contraction de la pneumonie (the age at pneumonia).  
-
+On cherche à représenter la courbe de l'estimateur de Kaplan-Meyer pour la fonction de survie de l'âge de contraction de la pneumonie (the age at pneumonia).
 Pour définir l'estimateur de Kaplan-Meyer on se donne :
+
 * Une durée T avec la fonction de survie associée $\bar{F}$
-* Un temps de censure C, independant de T
-pour la fonction de survie
-* Un n-échantillon i.i.d ${(t_1^C,\delta_1),(t_2^C,\delta_2),...,(t_n^C,\delta_n)}$ avec $t_1^C<t_2^C<...<t_n^C$ n-réalisations de la va $(T^C=min(T,C),\delta = \mathbb{I}_{T<C})$ 
+* Un temps de censure C, independant de T pour la fonction de survie
+* Un n-échantillon i.i.d  ${(t_1^C,\delta_1),(t_2^C,\delta_2),...,(t_n^C,\delta_n)}$ avec $t_1^C<t_2^C<...<t_n^C$ n-réalisations de la va $(T^C=min(T,C),\delta = \mathbb{I}_{T<C})$ 
 
-L'estimateur de Kaplan-Meyer est donnée par  :
-
+L'estimateur de Kaplan-Meyer est donnée par :
 $\hat{\bar{F}} = \prod_{i:t_i\le t} (1-\frac{\delta_i}{n-(i-1)}$ pour $t\ge t_1^C$ et 1 sinon $t< t_1^C$.
 
 Pour calculer cet estimateur avec R on utilise la fonction survfit qui crée une courbe de survie à partir de l'estimateur Kaplan-Meier combiné à la fonction Surv qui renvoi un objet survie qui peut être passé en paramètre à survfit.
@@ -60,43 +53,46 @@ Pour calculer cet estimateur avec R on utilise la fonction survfit qui crée une
 kmsurvival = survfit(Surv(chldage,hospital) ~ 1, data= pneumon)
 ```
 
-On peut tracer la courbe de Kapplan-Meyer
+On peut tracer la courbe de l'estimateur de Kapplan-Meyer.
 
 ```{r}
 library(ggfortify)
 autoplot(kmsurvival,main="Fig 1- Courbes de Kaplan-Meier - âge contraction de la pneumonie")
 ```
 
-On obtient à partir de l'estimateur KM de la pobabilité de survie,
-la probabilité qu'un nouveau né n'ai pas développé une pneumonie à 6 mois peut être lu dans le résultat de la sortie suivante:
+La probabilité qu'un nouveau né n'ai pas développé une pneumonie à 6 mois peut être lu dans le résultat de la sortie ci dessous à partir de la colonne survival au time 6. 
 
 ```{r}
 summary(kmsurvival)
 ```
-La probabilité estimée de n'avoir pas eu de pneumonie à 6 mois est de 0.981 (CI = [0.976 , 0.986])
+
+On trouve que la probabilité pour un nouveau né de ne pas avoir contracté la pneumonie à 6 mois est de 0.981. 
+Avec un intervalle de confiance de [0.976 , 0.986] pour le niveau de confiance 95% (valeur par défaut de survfit paramètre conf.int=.95).
 
 ### Question 3
 
 La variable dummy Z vaut 1 si les enfants sont allaités à la naissance et 0 sinon (ils ne le sont jamais).
-Pour cela on considère la variable : wmonth qui indique le mois à a partir duquel l'enfant est sevré.
+Pour cela on considère la variable : wmonth qui indique le mois à partir duquel l'enfant est sevré.
 On ajoute notre nouvelle variable Z au jeu de donnée initiale pneumon.
-Auparavant Z est transformée en factor par le biais de la fonction recode (avec 1 -> Allaitement /  0 ->Pas d'allaitement)
+Auparavant Z est transformée en varaiable categorielle (fonction de R : factor) par le biais de la fonction recode (qui transforme les valeurs 1 en Allaitement /  0 en Pas d'allaitement).
 
 ```{r}
-pneumon = mutate(pneumon , Z = recode(factor(wmonth > 0 ), "TRUE"= "Allaitement", "FALSE" ="Pas d'allaitement"))
+pneumon <- mutate(pneumon,Z=recode(factor(wmonth>0),"TRUE"="Allaitement","FALSE"="Pas d'allaitement"))
 ```
 
-Comme à la question précédente on utilse la fonction survfit, mais cette fois ci sur nos deux groupes de population, obtenus par différentiation à partir de la variable Z.
+Comme à la question précédente on utilise la fonction survfit, mais cette fois ci sur nos deux groupes de population, obtenus par différentiation à partir de la variable Z.
 
 ```{r}
-KM_fit =survfit(Surv(chldage,hospital)~Z, data = pneumon)
-summary(KM_fit)
+KM.fit =survfit(Surv(chldage,hospital)~Z, data = pneumon)
+summary(KM.fit)
 ```
 
 Pour avoir une idée de l'effet de l'allaitement sur le fait de contracter ou pas la pneumonie, on trace les courbes de survies des deux populations.
-On remarque une différence assez nette des probabilités de survie. 
+
+On remarque une différence assez nette des probabilités de survie.
 Lorsque l'enfant n'est pas allaité la probabilité estimé (par l'estimateur de Kaplan-Meyer) qu'il a de contacter une pneumonie est plus importante d'environ 2% au bout d'un an.
-on le voit bien sur le graphique obtenu à partir de la fonction autoplot u package ggfortify.
+
+On le voit bien sur le graphique obtenu à partir de la fonction autoplot u package ggfortify.
 https://cran.r-project.org/web/packages/ggfortify/vignettes/plot_surv.html
 
 ```{r message=FALSE, warning=FALSE}
@@ -104,7 +100,9 @@ kmsurvival.bf = survfit(Surv(chldage,hospital) ~ Z, data= pneumon)
 library(ggfortify)
 autoplot(kmsurvival.bf,main="Fig 2-Courbes de Kaplan-Meier - allaitement / ou pas (à partir de la naissance)")
 ```
-
+L'ecartement des courbes tend à s'accentuer avec le temps toutes deux décroissante, sans jamais se recouper.
+La courbe de survie de la population qui n'allète pas à une décroissance assez rapidejusqu'au 3ème mois. 
+La décroissance ralentit ensuite mais reste toujours plus importante que pour l'autre population.
 
 La comparaison de la survie dans nos 2 groupes peut s’effectuer au moyen du test du log-rank ou du test de Wilcoxon.
 NB1 : Le test du log-rank est plus performant lorsque les deux courbes de survie ne se croisent pas. Ce qui est notre cas.
@@ -126,17 +124,17 @@ survdiff(Surv(chldage,hospital) ~ Z, data= pneumon,rho=1)
 ```
 
 Dans les 2 cas, on a une petite p-value= 1e-04. La différence entre les deux groupes d'enfants allaités ou pas est bien significative.
-Ce qui confirme la première inpression donnée par le graphique précédent.
+Ce qui confirme la première inpression donnée par le graphique précédent (Fig-2.
 
 ### Question 4
-Pour tester l'hypothèse $H_0 : \beta_{breastf}^* =0$ on va maitenant utiliser le maximum de vraissemblance et 
 
-On test à nouveaux  mais cette  avec un modèle de Cox.
+On test à nouveaux la même hypothèse $H_0 : \beta_{breastf}^* =0$ mais cette  fois la probabilité de survie est estimée à partir d'un modèle de Cox.
+
 ```{r}
 coxph.bf = coxph(Surv(chldage,hospital) ~ Z, data= pneumon)
 summary(coxph.bf)
 ```
-Tous les tests concluent à un effet significatif de la variable $Z$. Avec une division du risque par 3 (p-value Wald = $2*10^{-4}$ et p-value LRT = $5*10^{-5}$) pour les enfants allaités.
+Tous les tests (wald, LRT, logrank) concluent à un effet significatif de la variable $Z$. Avec une division du risque par 3 (p-value Wald = $2*10^{-4}$ et p-value LRT = $5*10^{-5}$) pour les enfants allaités.
 
 Cela signifie qu'il y a une association importante entre l'allaitement et le risque de pneumonie.
 
@@ -144,7 +142,7 @@ Il conviendrait de tester la validité des hypothèses du modèle de cox employ�
 
 
 ### Question 5
-Modèles de Cox à 2 facteurs, en prenant pour variable explicative la variable Z et successivement, une à une chacune des autres variables explictives: mthage, urban, alcohol, smoke, region, poverty, bweight, race, education, nsibs, wmonth, sfmonth
+Modèles de Cox à 2 facteurs, en prenant pour variable explicative la variable Z et successivement, une à une chacune des autres variables explicatives: mthage, urban, alcohol, smoke, region, poverty, bweight, race, education, nsibs, wmonth, sfmonth
 La variable esxplicative "agepn" est sortie.
 
 "mthage"    "urban"     "alcohol"   "smoke"     "region"    "poverty"   "bweight"  
@@ -152,22 +150,18 @@ La variable esxplicative "agepn" est sortie.
 
 ```{r}
 #### variable explicatives: Z + mthag
-#variable explicatives: Z + mthage
 coxph.bf_mthage = coxph(Surv(chldage,hospital) ~ Z + mthage, data= pneumon)
 summary(coxph.bf_mthage)
 
 #### variable explicatives: Z + urban
-#variable explicatives: Z + urban
 coxph.bf_urban = coxph(Surv(chldage,hospital) ~ Z + urban, data= pneumon)
 summary(coxph.bf_urban)
 
 #### variable explicatives: Z + alcohol
-#variable explicatives: Z + alcohol
 coxph.bf_alcohol = coxph(Surv(chldage,hospital) ~ Z + alcohol, data= pneumon)
 summary(coxph.bf_alcohol)
 
 #### variable explicatives: Z + alcohol
-#variable explicatives: Z + smoke
 coxph.bf_smoke = coxph(Surv(chldage,hospital) ~ Z + smoke, data= pneumon)
 summary(coxph.bf_smoke)
 
@@ -177,37 +171,30 @@ coxph.bf_region = coxph(Surv(chldage,hospital) ~ Z + region, data= pneumon)
 summary(coxph.bf_region)
 
 #### variable explicatives: Z + poverty
-#variable explicatives: Z + poverty
 coxph.bf_poverty = coxph(Surv(chldage,hospital) ~ Z + poverty, data= pneumon)
 summary(coxph.bf_poverty)
 
-#### variable explicatives: Z + bweight
-#variable explicatives: Z + bweight
+#### variable explicatives: Z + bweightt
 coxph.bf_bweight = coxph(Surv(chldage,hospital) ~ Z + bweight, data= pneumon)
 summary(coxph.bf_bweight)
 
 #### variable explicatives: Z + race
-#variable explicatives: Z + race
 coxph.bf_race = coxph(Surv(chldage,hospital) ~ Z + race, data= pneumon)
 summary(coxph.bf_race)
 
 #### variable explicatives: Z + education
-#variable explicatives: Z + education
 coxph.bf_education = coxph(Surv(chldage,hospital) ~ Z + education, data= pneumon)
 summary(coxph.bf_education)
 
 #### variable explicatives: Z + nsibs 
-#variable explicatives: Z + nsibs 
 coxph.bf_nsibs = coxph(Surv(chldage,hospital) ~ Z + nsibs, data= pneumon)
 summary(coxph.bf_nsibs)
 
-#### variable explicatives: Z + wmonth
-#variable explicatives: Z + wmonth
+#### variable explicatives: Z + wmonthh
 coxph.bf_wmonth = coxph(Surv(chldage,hospital) ~ Z + wmonth, data= pneumon)
 summary(coxph.bf_wmonth)
 
 #### variable explicatives: Z + sfmonth
-#variable explicatives: Z + sfmonth
 coxph.bf_sfmonth = coxph(Surv(chldage,hospital) ~ Z + sfmonth, data= pneumon)
 summary(coxph.bf_sfmonth)
 
@@ -221,7 +208,6 @@ Dans le cas du test de Wald on retrouve aussi une petite p-value.
 La p-value = 0.001 est la p-value la plus grande. Elle est rencontrée pour les modèles incluant les variables Z+alcohool / Z+powerty /  Z+wmounth
 
 On reamrque que les p-values des tests de Wald univariés associées au coefficient des variables nsibs (nombre d'enfant dans la famille) et education dans les 2 modèles correspondants sont inférieures  à 5% et 1% respectivement.  
-
 Dans tous les cas la différence entre les 2 groupes est significative.
 Le fait d'allaiter contribue de manière significative à la survie (ne pas tombre malade et se retouver hospitalisé)
 
