@@ -203,7 +203,7 @@ mrlplot(pluies,main=" Mean Residual Life Plot - pécipitations à Marseille")
 
 seuil à 600 580 cf p57 cours GPD
 
-```{r echo=FALSE, fig.height=6, fig.width=8}
+```{r echo=FALSE, fig.height=4, fig.width=8}
 threshrange.plot(pluies, r = c(0, 1150), nint=20)
 ```
 
@@ -227,12 +227,31 @@ gmb.shape<- gmb$results[1]$par[2]
 ```
 
 
+Méthode          |        scale               |            shape           |
+---------------- | -------------------------- | -------------------------- |
+GEV - MLE GV     | `r gev$results[1]$par[1]`  | `r gev$results[1]$par[2]`  |
+GEV - MLE Gumbel | `r gumb$results[1]$par[1]` | `r gumb$results[1]$par[2]` |
+
+
+* Approximations des paramètres $scale$ et $shape$ et Intervalles de confiance
+
+```{r echo=FALSE}
+ci.gev
+ci.gumb
+#ci.gev.mmt
+```
+
+
 ```{r echo=FALSE, fig.height=8, fig.width=15}
 plot(FitMle)
 ```
 
 ```{r echo=FALSE, fig.height=8, fig.width=12}
-plot(FitGumb)
+#https://www.rdocumentation.org/packages/extRemes/versions/2.0-11/topics/fevd
+plot(FitGumb,type ="qq",main="qq Gumbel")
+plot(FitGumb,type ="qq2",main="qq2 Gumbel")
+plot(FitGumb,type ="density",main="Density Gumbel")
+plot(FitGumb,type ="rl",main="Return period - Gumbel" )
 ```
 
 ```{r echo=FALSE, fig.height=8, fig.width=12}
