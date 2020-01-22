@@ -1,0 +1,533 @@
+---
+title: "Rapport - Valeurs Extrême"
+btitle: ""
+author: "Philippe Real"
+date: '`r format(Sys.time(), " %d %B, %Y")`'
+abstract: "This is my abstract."
+keywords: "R"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 3
+    fig_caption: yes
+    keep_tex: yes
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r eval=FALSE, include=FALSE}
+install.packages("fgarch")
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE, r,echo=FALSE}
+rm(list=ls())
+
+library(evd)
+library(evir)
+library(ismev)
+library(fExtremes)
+library(extRemes)
+library(fitdistrplus)
+```
+
+
+# Partie IV - Comparaison des approches GEV et GPD sur les données *CAC40* 
+
+On s'intéresse dans cette première partie, au cour journalier de l'inide CAC40 de à.
+
+Les données ont été récupérées sur le site Yahoo Finance. Ticker "^FCHI" pour les données de l'indice CAC40.
+On considère un jeu de données quotidienne et un autre mensuel. Avec dans les 2 cas un historique de Janvier 1998 à Janvier 2020.
+A partir de cet historique de 22 ans on va construire différentes séries de profondeur d'historique différente.
+Après avoir annalysé ces séries on essaiera de construire un modèle de type ARIMA pour chacune d'elles.
+
+Pour cet ensemble de données, on va utiliser les deux approches (GEV et GPD) et les comparer.
+
+## Lecture des données - description statistique
+
+```{r echo=FALSE, fig.height=5, fig.width=15, message=FALSE, warning=FALSE}
+dataCAC40_raw_d <-read.table("Daily_Data_CAC40_1997-2019.csv", sep=",", dec=".",header=T, na.strings = "null")
+```
+
+Dans le cas des données journalières, il y a des données manquantes. On va les supprimer.
+La variable Date est aussi connvertit en structure date.
+```{r echo=FALSE}
+summary(dataCAC40_raw_d)
+```
+
+```{r echo=FALSE}
+dataCAC40_d<-dataCAC40_raw_d[which(dataCAC40_raw_d$Open != "NA"),]
+#dataCAC40_d<-dataCAC40_raw
+#dataCAC40_d[is.na(dataCAC40)] <- 0
+
+FrameCAC40_d <- as.data.frame(dataCAC40_d)
+FrameCAC40_d[['Date']] <- as.Date(FrameCAC40_d[['Date']], format='%Y-%m-%d')  
+FrameCAC40_d[,2] <- as.numeric(as.character(FrameCAC40_d[,2]))
+FrameCAC40_d[,3] <- as.numeric(as.character(FrameCAC40_d[,3]))
+FrameCAC40_d[,4] <- as.numeric(as.character(FrameCAC40_d[,4]))
+FrameCAC40_d[,5] <- as.numeric(as.character(FrameCAC40_d[,5]))
+FrameCAC40_d[,6] <- as.numeric(as.character(FrameCAC40_d[,6]))
+
+head(FrameCAC40_d)
+#summary(FrameCAC40_d)
+```
+
+
+### conversion des données en objet *time series* et transformation en log-return
+Ici on convertit les données en objet R ts (time series)
+Dans le cas des données journalières on utilise pour le parmaètre de fréquence (nb jours dans l'année) la valeur 256
+Ce qui correspond au nombre de jours par an (jours ouvrès sans les jours de fermeture) que l'on obtient une fois les NA supprimés.
+
+```{r echo=FALSE}
+val<-5 #Close
+freq<-256
+
+CAC40.F_98<- FrameCAC40_d[FrameCAC40_d[,1]> as.Date("1997-12-31"),]
+CAC40_98.ts=ts(as.vector(CAC40.F_98[,val]),start=c(1998,1),frequency=freq)
+
+CAC40.F <- FrameCAC40_d[FrameCAC40_d[,1]> as.Date("2013-12-31"),]
+CAC40.ts=ts(as.vector(CAC40.F[,val]),start=c(2014,1),frequency=freq)
+```
+
+On va considérer comme c'est souvent le cas en finance le log-return. C'est à dire la quantité déduite du prix $X_t$ de la manière suivante :
+Log-return $R_t$ des prix $X_t$ où $R_t=Log(X_t/X_{t-1})$.
+Cette appproche est bien adaptée au cadre de la théorie de Black-Scholes.
+
+* Obtention de la série des log return
+
+```{r warning=FALSE}
+cac40 <- 100*diff(log(CAC40.ts))
+cac40_98 <- 100*diff(log(CAC40_98.ts))
+
+matCAC40 = matrix(cac40,256)
+```
+
+* Graphique de la série obtenue et ACF / PCF
+
+```{r echo=FALSE, fig.height=5, fig.width=15, warning=FALSE}
+par(mfrow=c(1,3))
+plot(cac40,main='Log Rendement du CAC 40 de 2014 à 2020',xlab='Temps',ylab='Rendement')
+acf(cac40)
+pacf(cac40)
+```
+
+
+```{r echo=FALSE, fig.height=5, fig.width=15, warning=FALSE}
+par(mfrow=c(1,3))
+plot(cac40_98,main='Log Rendement du CAC 40 de 2014 à 2020',xlab='Temps',ylab='Rendement')
+acf(cac40_98)
+pacf(cac40_98)
+```
+
+```{r echo=FALSE, fig.height=5, fig.width=15}
+par(mfrow=c(1,2))
+h <- hist(cac40,main="log return", xlab="Log return",col="lightblue",ylim=c(0,400),breaks=40)
+text(h$mids,h$counts,labels=h$counts, adj=c(0.5, -0.5))
+#plot(cac40,pch=20)
+
+log.return<-cac40_98
+#log.return<-cac40
+
+cac40.df <- data.frame(date = c(time(log.return)),close = c(log.return) )
+log_cac40.F<-cac40.df$close
+
+negCAC40<--log_cac40.F[which(log_cac40.F < 0)]
+posCAC40<-log_cac40.F[which(log_cac40.F > 0)]
+
+mrlplot(log.return,main=" Mean Residual Life Plot")
+
+plot(negCAC40)
+plot(posCAC40)
+
+#hill(posCAC40,option="xi")
+#hill(log_cac40.F,option="xi")
+#hill(posCAC40,option="xi")
+#hill(cac40,option="xi")
+
+#hill(log.return,end =300)
+```
+
+```{r echo=FALSE}
+summary(cac40)
+```
+
+
+```{r echo=FALSE, fig.height=4, fig.width=14, warning=FALSE}
+matCAC40 = matrix(negCAC40,256)
+maxCAC40 = apply(matCAC40,1.5,max,na.rm = TRUE)
+vecAn = 1998:2019
+
+par(mfrow=c(1,2))
+emplot(matCAC40,main="Fonction de survie empirique - CAC 40 depuis 1998")
+plot(maxCAC40,main="Amplitudes maximales du cac40 à la baisse depuis 1998",type="h")
+```
+
+
+```{r echo=FALSE, fig.height=4, fig.width=14, warning=FALSE}
+matCAC40up = matrix(posCAC40,256)
+maxCAC40up = apply(matCAC40up,1.5,max,na.rm = TRUE)
+vecAn = 1998:2019
+
+par(mfrow=c(1,2))
+emplot(matCAC40up,main="Fonction de survie empirique - CAC 40 haussier depuis 1998")
+plot(maxCAC40up,main="Amplitudes maximales du cac40 à la hausse depuis 1998",type="h")
+```
+
+## Approches GEV et GPD sur les log-return baissier du cac40
+
+On reprend ici la démarche de l'étude REF1 en référence. On s'intéresser aux rendement baissier du CAC40.
+
+### Statistiques descriptives
+
+```{r echo=FALSE, fig.height=5, fig.width=15}
+par(mfrow=c(1,2))
+
+cac40.df <- data.frame(date = c(time(log.return)),close = c(log.return) )
+log_cac40.F<-cac40.df$close
+
+negCAC40<--log_cac40.F[which(log_cac40.F < 0)]
+posCAC40<-log_cac40.F[which(log_cac40.F > 0)]
+
+plot(negCAC40,main="Maximum baissiers des log-return du CAC40")
+plot(posCAC40,main="Maximum haussiers des log-return du CAC40")
+
+par(mfrow=c(1,2))
+
+mrlplot(log.return,main="Mean Residual Life Plot",strat=0)
+
+#hill(posCAC40,option="xi")
+#hill(log_cac40.F,option="xi")
+#hill(posCAC40,option="xi")
+#hill(cac40,option="xi")
+
+hill(log.return,end =300)
+```
+
+A la vue des graphiques les rendements haussier et baissier, semblent relativement similaires.
+On ne s'intéresse qu'aux rendements baissier, il faudrait aussi compléter l'étude par celle des rendements haussier.
+Par ailleurs cette méthode est discutable du point de vue de l'approche économique.
+On envisagera par la suite une autre approche très différente mais qui semble plus appropriée .
+
+### Approche GEV    
+
+#### Estimation des paramètres shape et scale par maximum de vraisemblance (MLE) ou des moments pondérés (PWM)
+
+Nous procédons ici à l'estimation des paramètres par maximum de vraisemblance et avec les moments pondérés. Nous ne testons pas de distribution particulière (Weibull, Gumbel ou Fréchet).
+
+```{r marseille.gev, echo=FALSE, message=FALSE, warning=FALSE}
+
+Fit.gev.Mle <- fevd(maxCAC40, type="GEV", method="MLE")
+ci.gev.Mle<-ci(Fit.gev.Mle,type="parameter")
+
+gev.Mle.scale<- Fit.gev.Mle$results[1]$par[1]
+gev.Mle.shape<- Fit.gev.Mle$results[1]$par[2]
+
+Fit.gev.Lm <- fevd(maxCAC40, type="GEV", method="Lmoments")
+ci.gev.Lm<-ci(Fit.gev.Lm,type="parameter")
+
+gev.Lm.scale<- Fit.gev.Lm$results[2]
+gev.Lm.shape<- Fit.gev.Lm$results[3]
+```
+
+Les résultats des paramètres sont détaillés dans le tableau ci-dessous :
+
+Méthode              |        scale                     |            shape                 |
+-------------------- | -------------------------------- | -------------------------------- |
+GEV - MLE            | `r Fit.gev.Mle$results[1]$par[2]`| `r Fit.gev.Mle$results[1]$par[3]`|
+GEV - Moments        | `r Fit.gev.Lm$results[2]`        | `r Fit.gev.Lm$results[3]`        |
+
+Examinons maintenant graphiquement les résultats des modélisations.
+
+```{r echo=FALSE, fig.height=8, fig.width=15}
+plot(Fit.gev.Mle)
+plot(Fit.gev.Lm)
+```
+
+Si les deux modélisations peinent à prédire de manière satisfaire les derniers quantiles observés, l'estimation par la méthode des moments semble plus appropriée au regard du graphique croisant les périodes de retour/niveaux de retour calculés et observés.
+
+Regardons maintenant les intervalles de confiance des estimateurs.
+
+```{r marseille.gev.ci, message=FALSE, echo=FALSE}
+ci.gev.Mle
+ci.gev.Lm
+```
+
+Il n'est pas exclu que le paramètre de forme, `shape`, soit nul. Aussi, nous testons à présent l'hypothèse d'une distribution des maxima généralisés dont le domaine d'attraction associé est `Gumbel`.
+
+```{r marseille.gev.gumbell, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=15}
+
+Fit.gumb.Mle <- fevd(maxCAC40, type="Gumbel", method="MLE")
+ci.gumb.Mle<-ci(Fit.gev.Lm,type="parameter")
+
+gumb.Mle.scale<- Fit.gumb.Mle$results[1]$par[1]
+gumb.Mle.shape<- Fit.gumb.Mle$results[1]$par[2]
+plot(Fit.gumb.Mle)
+```
+
+La nouvelle estimation semble graphiquement moins fiable notamment au regard du QQ plot des données observées *vs* prédites et du graphique comparant les niveaux de retour modélisés aux niveaux de retour observés pour une période de retour fixée. Nous retenons donc ici l'hypothèse que la loi des maxima généralisés appartient au domaine d'attraction de Fréchet, i.e  $\gamma>0$.
+
+=> Gumbel
+
+
+### Approche de la loi de Pareto généralisée - GPD
+
+#### Choix du seuil pour l'approche GPD
+
+* Méthodes graphiques 
+```{r echo=FALSE, fig.height=4, fig.width=7, message=FALSE, warning=FALSE}
+#par(mfrow=c(1,3))
+# A partir des graphes tcplot: partie constante du graphe.
+#tcplot(pluies.ts, tlim=c(10,1500))
+mrlplot(negCAC40,main=" Mean Residual Life Plot - CAC40")
+```
+
+```{r echo=FALSE, fig.height=6, fig.width=9}
+threshrange.plot(negCAC40, r = c(0, 5), nint=30)
+```
+
+seuil à 2.5 ou 3
+
+
+* function findthresh of the package evir
+
+```{r echo=FALSE}
+findthresh(negCAC40,c(10,50,100,200,400))
+```
+
+```{r echo=FALSE}
+seuil<-findThreshold(as.timeSeries(negCAC40), n = c(10, 50, 100, 200,400))
+seuil
+```
+
+```{r echo=FALSE}
+plot(negCAC40,main="CAC40 Baisses période 1998-2020")
+abline(h=seuil[2],col="red")
+abline(h=seuil[3],col="red",lty=2)
+abline(h=seuil[4],col="red",lty=3)
+abline(h=seuil[5],col="red",lty=4)
+#abline(h=seuil[5],col="red",lty=5)
+legend('bottomleft',c("seuil à 50","seuil à 100","seuil à 200","seuil à 400"),col="red",lty=c(1,2,3,4),lwd = rep(2,2))
+
+```
+
+#### Estimations des paramètres
+
+Comme précédemment avec l'approche GEV, nous procédons ici à l'estimation des paramètres par maximum de vraisemblance et avec la méthode des moments.
+
+```{r cac40.gpd, echo=FALSE}
+seuil<-2.6
+
+Fitthresh.Mle <-fevd(negCAC40,threshold=seuil,type="GP",method="MLE",time.units="days")#,time.units="day")
+ci.mle<-ci(Fitthresh.Mle,type="parameter")
+
+Fitthresh.MMT <-fevd(negCAC40,threshold=seuil,type="GP",method="Lmoments",time.units="days")
+ci.mmt<-ci(Fitthresh.MMT,type="parameter")
+
+mle.scale<- Fitthresh.Mle$results[1]$par[1]
+mle.shape<- Fitthresh.Mle$results[1]$par[2]
+
+mmt.scale<- Fitthresh.MMT$results[1]
+mmt.shape<- Fitthresh.MMT$results[2]
+```
+
+Méthode          |        scale                           |            shape                        |
+---------------- | ---------------------------------------| --------------------------------------- |
+GPD - MLE        | `r Fitthresh.Mle$results[1]$par[1]`    | `r Fitthresh.Mle$results[1]$par[2]`     |
+GPD - Moments    | `r Fitthresh.MMT$results[1]`           | `r Fitthresh.MMT$results[2]`            |
+
+Regardons maintenant les intervalles de confiance des estimations de paramètres $scale$ et $shape$.
+
+```{r marseille.gpd.ci, echo=FALSE}
+ci.mle
+ci.mmt
+```
+
+Graphiquement, nous pouvons retenir l'estimation par maximum de vraisemblance.
+
+```{r marseille.gpd.plot, echo=FALSE, fig.height=8, fig.width=15}
+plot(Fitthresh.Mle)
+plot(Fitthresh.MMT)
+```
+
+Comme avec l'approche GEV, nous pouvons tester l'hypothèse de nullité du paramètre $shape$ ($\gamma = 0$) et tester une distribution exponentielle des excès.
+
+```{r marseille.gpd.exp, echo=FALSE, fig.height=8, fig.width=12}
+Fitthresh.Mle.Exp <- fevd(negCAC40,threshold=seuil,type="Exponential",method="MLE",time.units="days")
+ci.exp<-ci(Fitthresh.Mle.Exp,type="parameter")
+plot(Fitthresh.Mle.Exp)
+```
+
+De nouveau, au regard des graphiques, nous pouvons écarter la distribution exponentielle et confirmer l'hypothèse d'un domaine domaine d'attraction de Fréchet (i.e  $\gamma>0$).
+
+Contraire => Gumbel
+
+
+### Estimation du niveau de retour correspondant à une période 1 ans et 5 ans
+
+Nous estimons ici les niveaux de retour pour des périodes de retour de 1 an, 5 ans et 10 ans à partir des estimations des paramètres obtenus :
+
+  + avec l'approche GEV et la méthode des moments ;
+  + avec l'approche GPD par maximum de vraisemblance.
+
+```{r marseille.return.level, echo=FALSE}
+ci.gev.mmt.1 <- ci(Fit.gev.Lm,type="return.level",return.period = 2)
+ci.gev.mmt.5 <- ci(Fit.gev.Lm,type="return.level",return.period = 5)
+ci.gev.mmt.10 <- ci(Fit.gev.Lm,type="return.level",return.period = 10)
+ci.gev.mmt.50 <- ci(Fit.gev.Lm,type="return.level",return.period = 50)
+
+ci.gmb.mmt.1 <- ci(Fit.gumb.Mle,type="return.level",return.period = 2)
+ci.gmb.mmt.5 <- ci(Fit.gumb.Mle,type="return.level",return.period = 5)
+ci.gmb.mmt.10 <- ci(Fit.gumb.Mle,type="return.level",return.period = 10)
+ci.gmb.mmt.50 <- ci(Fit.gumb.Mle,type="return.level",return.period = 50)
+
+ci.gpd.mle.1 <- ci(Fitthresh.Mle.Exp,type="return.level",return.period = 2)
+ci.gpd.mle.5 <- ci(Fitthresh.Mle.Exp,type="return.level",return.period = 5)
+ci.gpd.mle.10 <- ci(Fitthresh.Mle.Exp,type="return.level",return.period = 10)
+ci.gpd.mle.50 <- ci(Fitthresh.Mle.Exp,type="return.level",return.period = 50)
+```
+
+Méthode         |  2-year return      |  IC 95% borne Inf   | IC 95% borne Sup    |
+--------------- | ------------------- | ------------------- | ------------------- |
+Moments GEV     | `r ci.gev.mmt.1[2]` | `r ci.gev.mmt.1[1]` | `r ci.gev.mmt.1[3]` |
+MLE     GPD     | `r ci.gpd.mle.1[2]` | `r ci.gpd.mle.1[1]` | `r ci.gpd.mle.1[3]` |
+
+
+Méthode         |  5-year return      |  IC 95% borne Inf   | IC 95% borne Sup    |
+--------------- | ------------------- | ------------------- | ------------------- |
+Moments GEV     | `r ci.gev.mmt.5[2]` | `r ci.gev.mmt.5[1]` | `r ci.gev.mmt.5[3]` |
+MLE     GPD     | `r ci.gpd.mle.5[2]` | `r ci.gpd.mle.5[1]` | `r ci.gpd.mle.5[3]` |
+
+
+
+Méthode         |  10-year return      |  IC 95% borne Inf    | IC 95% borne Sup     |
+--------------- | -------------------- | -------------------- | -------------------- |
+Moments GEV     | `r ci.gev.mmt.10[2]` | `r ci.gev.mmt.10[1]` | `r ci.gev.mmt.10[3]` |
+MLE     GPD     | `r ci.gpd.mle.10[2]` | `r ci.gpd.mle.10[1]` | `r ci.gpd.mle.10[3]` |
+
+
+### Conclusion - Comparaison GEV et GPD
+
+Avec les deux approches, les résultats des niveaux de retour sont assez voisins pour une période de retour de 100 ans. Ils varient par contre sensiblement pour une période de retour de 1000 ans, principalement en raison de l'augmentation de la variance des résultats avec la méthode GPD du fait principalement d'un nombre d'observations plus réduit (88 observations au-dessus du seuil de 800 contre 127 maxima annuels).
+
+
+
+
+## Approche GARCH
+
+On va tenter ici de reprendre l'idée suggérée par McNeil and Frey REF2 et repris dans l'article (REF3) de Dupre, Kourouma, Sanfilippo et Taramasco.
+
+Pour ce faire on reprend le modèle GARCH(1,1) utilisé dans le rapport sur les séries temporelles pour modéliser les log return du CAC40.
+```{r warning=FALSE}
+cac40.1418 <- window(tsCAC40_1998_Open_d,start=c(2014,1),end=c(2019))
+cac40.Test19 <- window(tsCAC40_1998_Open_d,start=c(2019),end=c(2020))
+cac40.1419 <- window(tsCAC40_1998_Open_d,start=c(2014,1),end=c(2020))
+```
+
+```{r warning=FALSE}
+cac40.Rendement <- diff(log(cac40.1419))
+cac40.Rendement.Train <- diff(log(cac40.1418))
+cac40.Rendement.Test <- diff(log(cac40.Test19))
+```
+
+```{r echo=FALSE, warning=FALSE}
+require(fGarch)
+
+mod.cac40=garchFit(~garch(1,1),data=cac40.Rendement.Train,trace=FALSE,include.mean=TRUE)
+summary(mod.cac40)
+
+```
+
+Les résultats des tests sont satisfaisant. Mais on note la non normalité établie par les tests Jarque-Bera et Shapiro-Wilk qui ont tout deux une p-value très faible. L'estimation de la variance marginale est positive et est très faible.
+
+```{r echo=FALSE, warning=FALSE}
+var.marg.est<-function(mod){
+ param.estim=mod@fit$par
+ std.estim=mod@fit$se.coef
+ k<-which(names(param.estim)=="omega")
+ value=param.estim[k]/(1-sum(param.estim[(k+1):length(param.estim)]))
+ cat("variance marginale : ",value,"\n")
+ }
+var.marg.est(mod.cac40)
+```
+
+
+```{r eval=FALSE, fig.height=7, fig.width=15, warning=TRUE, include=FALSE}
+n1=length(cac40.Rendement)-999;n2=length(cac40.Rendement);n1.n2=n1:n2;
+mat.est=cbind(cac40.Rendement[n1.n2],qnorm(.9)*mod.cac40@sigma.t[n1.n2],
+ -qnorm(.9)*mod.cac40@sigma.t[n1.n2])
+matplot(n1:n2,mat.est,type='l',col='black',lty =c(1,2,2),
+xlab="1000 dernieres observations",ylab="rendement",xaxt="n")
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+#fitted = fitted(mod.cac40)
+#spec = garchSpec(model = mod.cac40)
+#garchSim(spec, n = 10)
+
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=15, warning=FALSE}
+par(mfrow=c(1,3))
+plot(mod.cac40, which = 1)
+plot(mod.cac40, which = 2)
+plot(mod.cac40, which = 3)
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=15, warning=FALSE}
+
+par(mfrow=c(1,3))
+
+plot(mod.cac40, which = 4)
+plot(mod.cac40, which = 5)
+plot(mod.cac40, which = 6)
+
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=12, warning=FALSE}
+
+par(mfrow=c(1,2))
+
+plot(mod.cac40, which = 7)
+plot(mod.cac40, which = 9)
+
+```
+
+### Prévisions
+
+```{r echo=FALSE, warning=FALSE}
+#fitted = fitted(mod.cac40)
+#spec = garchSpec(model = mod.cac40)
+#garchSim(spec, n = 10)
+
+predict(mod.cac40, n.ahead = 20, plot=TRUE, trace=FALSE, crit_val=2)
+par(mfrow=c(1,2))
+
+```
+
+
+## Conclusion
+
+
+## Références - Articles
+
+- REF1 Extreme value theory and peaks over threshold model: An application to the Russian stock market - Vladimir O. Andreev, Oleg B. Okunev, Sergey Eu. Tinyakov
+- REF2 Estimation of Tail-Related Risk Measures for Heteroscedastic Financial Time Series: an Extreme Value Approach - McNeil and Frey
+- REF3 Extreme Value at Risk and Expected Shortfall during Financial Crisis - L. Kourouma, D. Dupre, G. Sanfilippo, O. Taramasco
+ 
+
+
+
+
+
+
+
+
+
