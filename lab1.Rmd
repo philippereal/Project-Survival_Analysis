@@ -1,0 +1,15 @@
+---
+title: "Lab 1"
+output: html_notebook
+---
+
+```{r}
+library(survival)
+library(asaur)
+library(tidyverse)
+
+data("pharmacoSmoking")
+smok_lab = pharmacoSmoking[,1:4]
+glimpse(smok_lab)
+summary(smok_lab)
+```
