@@ -1,0 +1,75 @@
+---
+title: "Lab 2 part 1"
+output: html_notebook
+---
+
+```{r,warning=FALSE}
+library(tidyverse)
+library(survival)
+```
+On importe les données
+```{r}
+pharmacoSmoking = read_csv("./pharmacoSmoking.csv")
+glimpse(pharmacoSmoking)
+```
+Elles contiennent 2 colonnes d'identifiants, on en enlève donc une.
+```{r}
+pharmacoSmoking = pharmacoSmoking %>% select( -X1)
+```
+
+Les données contiennent maintenant un identifiant (`id`), un temps censuré (`ttr`), une indicatrice de censure (`relapse`) et 11 variables explicatives
+
+Nous allons estimer un premier modèle de Cox avec toutes les variables. Certaines variables discrètes ont plus de 2 facteurs, la dimension de la matrice de design est $125 \times 16$
+```{r}
+coxph(Surv(ttr,relapse)~ . - id, pharmacoSmoking)
+```
+L'un des coefficients associé à `ageGroup4` n'a pas été estimé. C'est normal car `ageGroup2` peut se déduire de `ageGroup4`, on a donc des colonnes parfaitement colinéaires dans la matrice de design. On choisit d'nelever `ageGroup2` et également la variable numérique `age`.
+```{r}
+fit_total = coxph(Surv(ttr,relapse)~ . - id - age - ageGroup2, pharmacoSmoking)
+summary(fit_total)
+```
+On obtient un premier modèle dont l'incide de concordance est plutôt bon ($0.67$). L'hypothèse $\mathcal H_0 : \beta^\star_1 =  \beta^\star_2 = \ldots = \beta^\star_p =0$ est rejetée par le LRT (p-value=$7e-3$). On remarque par ailleurs que les p-values des tests de Wald univariés associées au(x) coefficient(s) des variables  `grp`, `employment` et `ageGroup4` (au moins l'une d'entre elles pour les variables à plus de 2 modalités) sont inférieures à $5e-2$.
+
+On va donc faire une sélection de modèles par AIC.
+
+```{r}
+library(MASS)
+stepAIC(fit_total,trace = F)
+```
+Seules les variables associées à `grp`, `employment` et `ageGroup4` sont conservées, comme attendu. Le concordance index est maintenant de $0.65$.
+
+On peut alors interpréter les résultats dans ce modèle.
+```{r}
+fit_final = coxph(Surv(ttr, relapse) ~ grp + employment + ageGroup4, 
+    data = pharmacoSmoking)
+summary(fit_final)
+```
+Le fait de n'avoir qu'un patch (plutôt que la combinaison) multiplie le risque relatif par $1.9278$. 
+Pour la variable `employment` les risques des modalités `pt` et `other`sont multipliés par $1.68$ et $1.86$ par rapport à celui de la modalité `ft`.
+Pour l'âge, seule la modalité `50-64` a un coefficient significativement différent de $0$. Le risque de cette modalité est multiplié par $0.36$ par rapport à `21-34`.
+
+On peut alors faire des prédictions dans le modèle final.
+La commande 
+```{r}
+marqueurs = predict(fit_final)
+```
+permet d'obtenir les marqueurs estimés pour tous les individus dans ce modèle.
+
+La commande permet d'obtenir les estimations liées au risque de base
+```{r}
+prediction = survfit(fit_final)
+cbind(prediction$time,prediction$cumhaz) # pour le risque de base intégré
+```
+
+On représente graphiquement les prédictions des fonctions de survie pour les 16ième et 106ième individus des données ainsi que pour un individu dont tous les variables (dans la matrice de design) seraient nulles : c'est-à-dire ayant reçu la combinaison, à plein temps `ft` et âgé de 21 à 34 ans.
+```{r}
+time = prediction$time
+pred_ind0 = prediction$surv
+pred_ind16 =  exp(-prediction$cumhaz*exp(marqueurs[16]))
+pred_ind106 =  exp(-prediction$cumhaz*exp(marqueurs[106]))
+pred = tibble(time,pred_ind0, pred_ind16,pred_ind106) %>% gather("ind","value",2:4)
+ggplot(pred,aes(x=time,y=value,color=ind)) + geom_step()
+```
+
+ 
+ 
