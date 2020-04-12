@@ -1,0 +1,660 @@
+---
+title: "Lab 3 - Survival Analysis"
+btitle: ""
+author: "Philippe Real"
+date: '`r format(Sys.time(), " %d %B, %Y")`'
+keywords: "Survival Analysis, R"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 3
+    fig_caption: yes
+    keep_tex: yes
+    number_sections: true
+  word_document:
+    toc: yes
+  html_document:
+    df_print: paged
+    toc: yes
+---
+```{r,echo=FALSE, eval=FALSE}
+install.packages("Metrics")
+install.packages("pROC")
+install.packages("plotROC")
+install.packages("caret")
+install.packages("KMsurv")
+install.packages("survival")
+install.packages("survAUC")
+#install.packages("vctrs")
+install.packages("tidyverse")
+install.packages("ranger")
+install.packages("party")
+install.packages("plotrix")
+install.packages("randomForestSRC")
+install.packages("fields")
+
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+rm(list=ls())
+
+library(tidyverse)
+library(KMsurv)
+library(survival)
+library(MASS)
+library(survAUC)
+library(Metrics)
+library(pROC)
+library(plotROC)
+library(caret)
+library(ranger)
+library(fifer)
+
+```
+
+\pagebreak
+
+# Exercice N°2 - Comparaison des approches analyse de survie et classification
+
+On souhaite prévoir la probabilité de rechute (“recurrent”) à 24 mois. Pour cela, on comparerez les méthodes de l’analyse de survie (modèles de Cox, survival random forests, ...) aux méthodes de classification. Les mesures de performances (notamment l’AUC) se feront sur un sous-échantillon de test formé de 20 à 30% des données (attention à bien stratifier !).
+
+## Import des données wpc
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+wpbc.names = read_csv("./wpbc.names",col_names = F)
+wpbc = read_csv("./wpbc.data",col_names = F)
+names(wpbc) = c("id","recur","time",paste0("V",c(1:30)),"tumor_size","lymph")
+glimpse(wpbc)
+```
+
+
+
+```{r}
+
+```
+
+
+\pagebreak
+
+## Label pour la tâche de classification.
+
+A partir de la variable  `recur` (rechute) variable binaire.
+
+```{r}
+wpbc = wpbc %>% mutate(id = factor(id)) %>% mutate( recur = recode_factor(recur , 'N' = FALSE, 'R' = TRUE ))
+wpbc$time <- as.numeric(wpbc$time )
+wpbc<-filter(wpbc,wpbc$lymph!="?")
+wpbc$lymph <- as.numeric(wpbc$lymph )
+```
+
+```{r}
+data.cox<-wpbc
+data.cox$recur<-as.numeric(data.cox$recur)
+data.cox$recur<-data.cox$recur-1
+head(data.cox)
+```
+
+## Création des jeux de données train et test
+
+En fixant la racine du générateur aléatoire (fonction R set.seed), on crée un jeu de données de train et un de test.
+On utilise la fonction $stratified$ du package $fifer$.
+
+On doit retouver le même type de distribution en particulier pour les variables importantes dans nos différents jeux de données.
+En annexe on présente les summary des différents échantillons.
+
+```{r message=FALSE, warning=FALSE}
+set.seed(456)
+dataTrain <-stratified(data.cox,c("recur","lymph"),size=0.7)
+dataTest <- anti_join(data.cox,dataTrain)
+```
+
+```{r include=FALSE}
+## set the seed to make your partition reproducible
+set.seed(123)
+
+data.cox1<-data.cox[data.cox$recur==0,]
+trainIndex <- createDataPartition(data.cox1$lymph,p=0.70,list=F)
+#smp_size <- floor(0.70 * nrow(data.cox1))
+#trainIndex <- sample(seq_len(nrow(data.cox1)), size = smp_size)
+train1 <- data.cox1[trainIndex, ]
+test1 <- data.cox1[-trainIndex, ]
+
+data.cox2<-data.cox[data.cox$recur==1,]
+trainIndex <- createDataPartition(data.cox2$lymph,p=0.70,list=F)
+#smp_size <- floor(0.70 * nrow(data.cox2))
+#trainIndex <- sample(seq_len(nrow(data.cox2)), size = smp_size)
+train2 <- data.cox2[trainIndex, ]
+test2<- data.cox2[-trainIndex, ]
+
+dataTrain<-rbind(train1,train2)
+dataTest<-rbind(test1,test2)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+#set.seed pour rendre reproductible les résultats
+set.seed(123)
+trainIndex <- createDataPartition(data.cox$recur,p=0.7,list=F)
+dataTrain <- data.cox[trainIndex,]
+dataTest <- data.cox[-trainIndex,]
+```
+
+
+ * fréquences absolues des classes - éch. d'apprentissage
+
+```{r echo=FALSE}
+print(table(dataTrain$recur))
+```
+
+ * fréquences relatives des classes dans l'éch. d'apprentissage
+
+```{r echo=FALSE}
+print(prop.table(table(dataTrain$recur)))
+```
+
+ * distribution des classes dans l'éch. test
+
+```{r echo=FALSE}
+print(prop.table(table(dataTest$recur)))
+```
+
+## Méthodes d'analyse de survie 
+
+Avant de construire un mopdèle de Cox on commence par regarder la courbe de survie de Kplan-Meyer.
+
+### Courbe de survie de Kaplan-Meyer
+
+```{r}
+km.fit <- survfit(Surv(time, recur) ~ 1, data=dataTrain)
+```
+
+Prévision à 24 mois avec l'estimateur de Kapplan-Meyer
+```{r echo=FALSE}
+summary(km.fit,time=24)
+```
+
+```{r echo=FALSE, fig.height=4}
+library(ggfortify)
+autoplot(km.fit,main="Courbes de Kaplan-Meier")
+```
+\pagebreak
+
+### Modèle de Cox complet
+
+```{r echo=FALSE}
+V<-paste0("V",c(1:30))
+f.cox=formula(paste("Surv(time,recur) ~ tumor_size + lymph + ",paste0(V, collapse = " + ")))
+coxph.m.comp <- coxph(f.cox, data = dataTrain)
+```
+
+```{r echo=FALSE}
+summary(coxph.m.comp)
+```
+
+### Modèle de Cox et sélection de variables par AIC 
+
+On utilise la fonction de R stepAIC pour faire le choix de variables.
+
+```{r include=FALSE}
+coxph.m.AIC<-stepAIC(coxph.m.comp)
+```
+
+```{r echo=FALSE}
+summary(coxph.m.AIC)
+```
+
+La sélection de variable, semble avoir bien amélioré le modèle.
+Les variables retenues semblent, plutôt très significatives et les tests meilleurs. 
+
+```{r echo=FALSE, fig.height=4}
+cox.m.fit <-survfit(coxph.m.AIC)
+library(ggfortify)
+autoplot(cox.m.fit,main="Modèle de Cox - stepAIC - Courbes de survie")
+```
+
+### Forêts-aléaoires de survie
+
+```{r include=FALSE}
+f.cox=formula(paste("Surv(time,recur) ~ tumor_size + lymph + ",paste0(V, collapse = " + ")))
+r.forest <- ranger(f.cox,data = data.cox,mtry =7,importance = "permutation",splitrule = "extratrees",verbose = TRUE)
+```
+
+```{r}
+r.forest
+```
+
+## Méthode de classification - Modèle de regression logistique
+Comme méthode de classification, on va considérer un modèle de regression logistique.
+
+### Ajout du critère de décision
+
+Pour utiliser un modèle logit on ajoute une variable de décision binaire, qui correspond à une rechute entre 0 et 24 mois.
+Cette nouvelle variable est aussi ajoutée au jeu de test.
+
+```{r include=FALSE}
+data.logit.Train<-dataTrain
+data.logit.Test<-dataTest
+```
+
+```{r echo=TRUE}
+data.logit.Train=data.logit.Train %>% mutate( rechute24 = data.logit.Train$time<25 & data.logit.Train$recur==1)
+data.logit.Test=data.logit.Test %>% mutate( rechute24 = data.logit.Test$time<25 & data.logit.Test$recur==1)
+```
+
+```{r include=FALSE}
+data.logit.Train<-data.logit.Train[,-2]
+data.logit.Train<-data.logit.Train[,-2]
+data.logit.Test<-data.logit.Test[,-2]
+data.logit.Test<-data.logit.Test[,-2]
+```
+
+### Modèle logit complet ou saturé
+
+On construit tout d'abord le modèle complet. Puis à partir de ce modèle complet et par minimisation du critère AIC on obtiendra le modèle logit final.
+
+```{r include=FALSE}
+V<-paste0("V",c(1:30))
+f.glm=formula(paste("rechute24 ~ 1  + tumor_size + lymph + ",paste0(V, collapse = " + ")))
+m_logit.cmp<-glm(f.glm,family = binomial,  data = data.logit.Train )
+```
+
+```{r echo=FALSE}
+summary(m_logit.cmp)
+```
+
+La variable lymph semble particulièrement significative.
+
+### Modèle logit final
+
+On va sélectionner le modèle logit final en choissant le modèle qui minimise le critère AIC.
+Pour cela on utilisera la fonction R: $step$
+
+```{r include=FALSE}
+m_logit.BwdFwd <- step(m_logit.cmp, data=data.logit.Train, direction="both")
+```
+
+```{r echo=FALSE}
+summary(m_logit.BwdFwd)
+```
+
+### Comparaison des deux modèles $logit$ par un test anova
+
+```{r echo=FALSE}
+anova(m_logit.cmp,m_logit.BwdFwd, test="LRT")
+```
+
+Le test accepte la nullité des paramètres du logit complet qui ne sont pas dans le logit obtenu avec la fonction de choix de modèles step. On prévilégiera le modèle step: $m_logit.BwdFwd$. 
+
+## Prédire dans les 2 modèles les probabilités de rechute à 24 mois.
+
+### Modèles de $Cox$ prédiction de rechute à 24 mois.
+
+On va tracer la courbe de survie pour les différents patients du jeu de test pour chacun des 2 modèles obtenu. On calculera aussi, simultanément la probabilité de survie à 24 mois pour chacun des patients en utilisant la fonction $survfit$.
+
+* Courbe de survie des différents patients à partir du modèle de Cox obtenu par stepAIC
+
+```{r echo=FALSE, fig.height=5, fig.width=12}
+survival<-function(DataPredict,model,time,name)
+{
+N<-nrow(DataPredict)
+
+survival.df<-data.frame(matrix(ncol = 9, nrow = N))
+colnames(survival.df) <- c("id", "time", "n.risk", "n.event", "survival","relapse", "std.err", "lowerCI_95","uperCI_95")
+
+indice_time <-21
+summary(cox.m.fit,time=24)
+summary(cox.m.fit)
+res<-summary(cox.m.fit,time=24)
+res$time
+res$surv
+
+kmsurvival.final<-survfit(model , newdata = DataPredict[1,])
+
+   survival.df[1,1]=as.character(DataPredict[1,1]$id)
+   surv_time<-summary(kmsurvival.final,time=24)
+   survival.df[1,2]=surv_time$time
+   survival.df[1,3]=surv_time$n.risk
+   survival.df[1,4]=surv_time$n.event
+   survival.df[1,5]=surv_time$surv
+   survival.df[1,6]=1-surv_time$surv
+   survival.df[1,7]=surv_time$std.err
+   survival.df[1,8]=surv_time$lower
+   survival.df[1,9]=surv_time$upper
+
+   plot(kmsurvival.final$time, 100*kmsurvival.final$surv, 
+type = "l", ylim = c(0,100), col = "red", xlab = "Mois",ylab = "Survie", 
+main = paste0("Courbe de survie des patients - prédiction par Cox ",name))
+
+
+cols <- colors()
+
+   for (i in 2:N){
+      kmsurvival.final<-survfit(model , newdata = DataPredict[i,])
+      survival.df[i,1]=as.character(DataPredict[i,1]$id)
+      surv_time<-summary(kmsurvival.final,time=24)
+      survival.df[i,2]=surv_time$time
+      survival.df[i,3]=surv_time$n.risk
+      survival.df[i,4]=surv_time$n.event
+      survival.df[i,5]=surv_time$surv
+      survival.df[i,6]=1-surv_time$surv
+      survival.df[i,7]=surv_time$std.err
+      survival.df[i,8]=surv_time$lower
+      survival.df[i,9]=surv_time$upper
+   
+      lines(kmsurvival.final$time, 100*kmsurvival.final$surv, type = "l", col = cols[i])
+   }
+return(survival.df)
+}
+```
+
+```{r fig.height=4}
+DataPredict<-dataTest
+survival.aic.df<-survival(dataTest,coxph.m.AIC,24,"AIC")
+```
+
+```{r eval=FALSE, include=FALSE}
+head(survival.aic.df,n=7)
+```
+
+```{r}
+summary(survival.aic.df)
+```
+
+
+```{r fig.height=3.5, include=FALSE}
+# Courbe de survie des différents patients à partir du modèle de Cox complet
+DataPredict<-dataTest
+survival.cmp.df<-survival(dataTest,coxph.m.comp,24,"complet")
+```
+
+```{r eval=FALSE, include=FALSE}
+head(survival.cmp.df,n=7)
+```
+
+```{r eval=FALSE, include=FALSE}
+summary(survival.cmp.df)
+```
+
+
+* Probabilité de rechute à 24 mois pour les modèles de Cox
+
+La probabilité de rechute (moyenne) à 24 mois peut aussi être obtenue globalement en utilisant : $survfit$ sur tout l'échantillon.
+
+```{r}
+cox.m.comp.fit <-survfit(coxph.m.comp)
+cox.m.aic.fit <-survfit(coxph.m.AIC)
+```
+
+```{r include=FALSE}
+Proba.cox.cmp <- 100*round(1-cox.m.comp.fit$surv[24],5)
+Proba.cox.aic <- 100*round(1-cox.m.aic.fit$surv[24],5)
+Surv.cox.cmp <- 100*round(cox.m.comp.fit$surv[24],5)
+Surv.cox.aic <- 100*round(cox.m.aic.fit$surv[24],5)
+```
+
+Modèle         |  Proba-rechute %  | Proba-survie %   |
+-------------- | ----------------- | ---------------- |
+Cox - complet  | `r Proba.cox.cmp` | `r Surv.cox.cmp` |
+Cox - stepAIC  | `r Proba.cox.aic` | `r Surv.cox.aic` |
+
+### Survival Random-Forest prédiction de rechute à 24 mois.
+
+* Courbe de survie des différents patients à partir du modèle Random-Forest
+
+```{r echo=FALSE, fig.height=4}
+r.surv.prob <- data.frame(r.forest$survival)
+r.mean.prob <- sapply(r.surv.prob,mean)
+r.death.times <- r.forest$unique.death.times
+
+N<-nrow(dataTest)
+
+survival.RF.df<-data.frame(matrix(ncol = 1, nrow = N))
+#colnames(survival.RF.df) <- c("id", "time", "n.risk", "n.event", "survival","relapse", "std.err", "lowerCI_95","uperCI_95")
+colnames(survival.RF.df) <- c( "survival")
+
+indice_time <-21 #=> a controler! indice deathTime[21]=24
+
+cols <- colors()
+
+plot(r.forest$unique.death.times,r.forest$survival[1,],type = "l",ylim = c(50,100),col = "red",xlab = "Mois",ylab = "Survie",main = "Courbe de survie des patients - prédiction par RF")
+for (i in 1:N)
+{
+   lines(r.death.times, 100*r.forest$survival[i,], type = "l", col = cols[i])
+   survival.RF.df[i,1] = r.forest$survival[i,indice_time]
+   
+   #survival.RF.df[i,1]=as.character(DataPredict[i,1]$id)
+   #survival.RF.df[i,2]=kmsurvival.final$time[indice_time]
+   #survival.RF.df[i,3]=kmsurvival.final$n.risk[indice_time]
+   #survival.RF.df[i,4]=kmsurvival.final$n.event[indice_time]
+   #survival.RF.df[i,5]=kmsurvival.final$surv[indice_time]
+   #survival.RF.df[i,6]=1-kmsurvival.final$surv[indice_time]
+   #survival.RF.df[i,7]=kmsurvival.final$std.err[indice_time] 
+   #survival.RF.df[i,8]=kmsurvival.final$lower[indice_time] 
+   #survival.RF.df[i,9]=kmsurvival.final$upper[indice_time] 
+}
+lines(r.death.times, r.mean.prob, lwd = 2)
+legend(500, 0.7, legend = c('Average = black'))
+
+res<-summary(r.forest$survival)
+
+```
+
+On donne aussi la probabilité de rechute à 24 mois pour la random forest:
+```{r}
+proba.mean<- round(100*(1-mean(sapply(1:dim(dataTrain)[1], function(n) r.forest$survival[n,][21]))),2)
+surv.mean <-round(100-proba.mean,2)
+```
+
+Modèle         |  Proba-rechute %  | Proba-survie %   |
+-------------- | ----------------- | ---------------- |
+Random forest  | `r proba.mean`    | `r surv.mean`    |
+
+\pagebreak
+
+### Comparaison des courbes de survie moyennes des différents modèles
+
+On trace les courbes de survie des modèles étudiés : Kapplan Meyer, Cox et RF.
+On remarque que les 2 modèles de Cox sont très proches, largement au dessus de KM et RF.
+
+```{r echo=FALSE, fig.height=3, fig.width=7}
+par(mfrow=c(1,2))
+km.time <- rep("KM",length(km.fit$time))
+km.df <- data.frame(km.fit$time,100*km.fit$surv,km.time)
+names(km.df) <- c("Time","Surv","Model")
+
+cox.time <- rep("Cox.comp",length(cox.m.comp.fit$time))
+cox.comp.df <- data.frame(cox.m.comp.fit$time,100*cox.m.comp.fit$surv,cox.time)
+names(cox.comp.df) <- c("Time","Surv","Model")
+
+cox.ai.time <- rep("Cox.aic",length(cox.m.aic.fit$time))
+cox.aic.df <- data.frame(cox.m.aic.fit$time,100*cox.m.aic.fit$surv,cox.ai.time)
+names(cox.aic.df) <- c("Time","Surv","Model")
+
+cox.ai.time <- rep("Cox.aic",length(cox.m.aic.fit$time))
+cox.aic.df <- data.frame(cox.m.aic.fit$time,100*cox.m.aic.fit$surv,cox.ai.time)
+names(cox.aic.df) <- c("Time","Surv","Model")
+
+r.forest.time <- rep("RF",length(r.forest$unique.death.times))
+r.forest.df <- data.frame(r.forest$unique.death.times,100*r.mean.prob,r.forest.time)
+names(r.forest.df) <- c("Time","Surv","Model")
+
+plot.df <- rbind(km.df,cox.comp.df,cox.aic.df,r.forest.df)
+
+p <- ggplot(plot.df, aes(x = Time, y = Surv, color = Model))
+p + geom_line()
+```
+
+
+
+### Modèles $logit$ prédiction de rechute à 24 mois.
+
+On utilise la fonction predict de R.
+
+```{r}
+prev_m_logit.cmp <- predict(m_logit.cmp, newdata = data.logit.Test, type = "response" )
+prev_m_logit.aic <- predict(m_logit.BwdFwd,newdata = data.logit.Test, type = "response" )
+```
+
+On stock dans un tableau les probabilités de rechute/survie pour chaque individus obtenues à partir des différents modèles  
+
+```{r fig.height=5, fig.width=10, echo=FALSE}
+ pred_proba <- data.frame(
+   r.forest = 1-survival.RF.df$survival,
+   coxph.cmp = 1-survival.cmp.df$survival,
+   coxph.aic = 1-survival.aic.df$survival,
+   logit.cmp = prev_m_logit.cmp,
+   logit.aic = prev_m_logit.aic
+  )
+
+head(round(pred_proba,3),n=3)
+```
+
+* Probabilité de rechute pour le logit - complet
+
+```{r echo=FALSE}
+summary(pred_proba$logit.cmp)
+prob.cmp<-round(100*mean(pred_proba$logit.cmp),2)
+surv.cmp<-round(100-prob.cmp,2)
+```
+
+* Probabilité de rechute pour le logit - aic
+
+```{r echo=FALSE}
+summary(pred_proba$logit.aic)
+prob.aic<-round(100*mean(pred_proba$logit.aic),2)
+surv.aic<-round(100-prob.aic,2)
+```
+
+Modèle         |  Proba-rechute %  | Proba-survie %   |
+-------------- | ----------------- | ---------------- |
+logit-complet  | `r prob.cmp`      | `r surv.cmp`     |
+lgit-stepAIC   | `r prob.aic`      | `r surv.aic`     |
+
+\pagebreak
+
+## Comparaison des modèles en termes de précision (accuracy) et d’AUC.
+
+### Pourcentage de réussite des modèles par rapport à l'observation
+
+* Estimation au seuil de 0.5
+ 
+On confronte les probabilités obtenues aux seuil de 0.5. Dés que la prévision dépasse 50% on prédit qu'il y a rechute.
+
+```{r fig.height=7, fig.width=10, include=TRUE, paged.print=TRUE}
+pred_0.5 <- apply(pred_proba >=0.5, 2, factor)#,labels=c("no","yes"))
+result<-cbind(pred_0.5,data.logit.Test$rechute24)
+```
+
+```{r include=FALSE}
+#Probabilités moyennes d'erreur de prédiction  pour les modèles logit
+log_predict.cmp <- ifelse(prev_m_logit.cmp > 0.5,1,0)
+log_predict.aic <- ifelse(prev_m_logit.aic > 0.5,1,0)
+
+POK.logit.cmp<- round( 100*(mean(log_predict.cmp == data.logit.Test$rechute24)),2)
+POK.logit.aic<-round(100*(mean(log_predict.aic == data.logit.Test$rechute24)),2)
+
+Err.logit.cmp<- round( 100*(1-mean(log_predict.cmp == data.logit.Test$rechute24)),2)
+Err.logit.aic<-round(100*(1-mean(log_predict.aic == data.logit.Test$rechute24)),2)
+```
+
+* tableau des % de réussite de prédiction pour les différents modèles
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(tidyverse)
+compare_PredObs <- data.frame(pred_0.5)
+compare_PredObs <- compare_PredObs %>% mutate(Observe=data.logit.Test$rechute24) 
+res<- compare_PredObs %>% summarise_all(funs( 100*mean(Observe==.))) %>% round(4)
+head(res)
+```
+
+* tableau des % d'erreur de prédiction pour les différents modèles
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(tidyverse)
+compare_PredObs <- data.frame(pred_0.5)
+compare_PredObs <- compare_PredObs %>% mutate(Observe=data.logit.Test$rechute24) 
+res<- compare_PredObs %>% summarise_all(funs( 100*(1-mean(Observe==.)))) %>% round(4)
+head(res)
+```
+
+### AUC des différents modèles
+
+### Courbes ROC et AUC des différents modèles
+
+```{r fig.height=5, fig.width=7, message=FALSE, warning=FALSE, include=FALSE}
+df_roc.all <- pred_proba %>% mutate(obs = data.logit.Test$rechute24) %>%
+  gather(key = methode, value = score, r.forest,coxph.cmp, coxph.aic, logit.cmp, logit.aic) #coxph.comp,
+```
+
+```{r echo=FALSE, fig.height=5, fig.width=7, message=FALSE, warning=FALSE}
+ ggplot(df_roc.all) + aes(d=obs,m=score,color=methode) + geom_roc()+theme_classic()
+```
+
+On trace les courbes ROC des différents modèles sur un même graphique.
+Le meilleur estimateur aura une aire sous la courbe le plus proche possible de 1.
+La courbe idéale serait perpendiculaire aux abscisse du point origine jusqu'au point (0.1) puis prallèle jusqu'au point (1,1). Si bien que l'aire sous cette courbe serait égale à 1.
+
+```{r message=FALSE, warning=FALSE}
+df_roc.all %>% group_by(methode) %>% summarize(AUC=auc(obs,score))
+```
+
+
+on confirme ces résultats en utilisant une autre méthode, la méthode roc du package R $pROC$ 
+
+```{r echo=FALSE, fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+par(pty="s")
+par(mfrow=c(1,2))
+
+roc(data.logit.Test$rechute24,pred_proba$coxph.aic, plot=T, print.auc =T,legacy.axes=T,percent=T, 
+    main="Courbe ROC - Modèle de Cox par sélection AIC", xlab="% faux positifs", ylab="% vrais positifs")
+
+roc(data.logit.Test$rechute24,pred_proba$coxph.cmp, plot=T, print.auc =T,legacy.axes=T,percent=T, 
+    main="Courbe ROC - Modèle de Cox complet",xlab="% faux positifs", ylab = "% vrais positifs")
+```
+
+
+```{r echo=FALSE, fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+par(pty="s")
+par(mfrow=c(1,2))
+
+roc(data.logit.Test$rechute24,pred_proba$logit.cmp, plot=T, print.auc =T,legacy.axes=T,percent=T, 
+    main="Courbe ROC - Modèle logit complet",xlab="% faux positifs",ylab="% vrais positifs")
+
+roc(data.logit.Test$rechute24,pred_proba$logit.aic, plot=T, print.auc =T,legacy.axes=T,percent=T, 
+    main="Courbe ROC - Modèle logit par sélection", xlab="% faux positifs", ylab="% vrais positifs")
+
+```
+
+
+
+## Conclusion
+
+En terme d'accruancy (erreur de prévision par rapport aux données de test) les modèles sont relativement similaires. Et même Certains modèles peuvent avoir des résultats d'accruancy identiques. Le critère AUC et les courbes ROC permettent de mieux appréhender les différences entre modèles et aide à leur sélection.
+Le fait est que l'on n'est pas parvenu à obtenir des résultats stables au niveau des critères AUC et d'accruancy (et donc des modèles). Probablement dû enparie à la manière dont les jeux de données Train et Test ont été construits. Et il est très possible que ce soit la conséquence d'une mauvaise stratification. Comme conséquence le choix de modèle est rendu difficile par l'instabilité des résultats. Il est aussi possible que le nombre de données assez faible ait pénalisé certaines méthodes comme les random forest et contribué a rendre le résultat instable (au niveau du classement des modèles). Ceci est accentué par une sépartion des données en un jeu d'apprentissage et de validation. 
+Le seul résultat stable se situe au niveau de la prédiction de survie qui est nettement supérieure dans le cas des modèles de Cox d'environ de l'ordre de 90% soit 10% à 15% par rapport au modèle logit. 
+
+\pagebreak
+
+
+## Annexes
+
+### comparaison des jeux de données complet, train et test
+
+* Donnnées complètes
+
+```{r }
+summary(data.cox)
+
+```
+
+* Données Train
+
+```{r }
+summary(dataTrain)
+```
+
+* Données Test
+
+```{r }
+summary(dataTest)
+```
+
